@@ -1,0 +1,19 @@
+# Secrets and private material never enter this repo (Gitleaks is a backstop)
+*.env
+*.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*id_rsa*
+*id_ed25519*
+recovery-kit*
+escrow*
+.tfstate
+*.tfstate.*
+.terraform/
+.vault/
+secrets/
+credentials/
+*_credentials.json
+ServiceAccount*.json

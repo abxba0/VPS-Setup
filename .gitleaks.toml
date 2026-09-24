@@ -1,0 +1,5 @@
+# Gitleaks configuration — https://github.com/gitleaks/gitleaks
+# Uses built-in rules; extend here if false positives appear.
+# Example: allowlist a documented fake token used in tests.
+[extend]
+useDefault = true
