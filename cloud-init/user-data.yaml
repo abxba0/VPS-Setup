@@ -1,0 +1,156 @@
+#cloud-config
+# =============================================================================
+# Phase 0.2 bootstrap — OVH VPS (Ubuntu 24.04 LTS)
+# How to use: OVH control panel -> reinstall/Install -> "custom" (cloud-init)
+# template, paste this file. REPLACE the SSH key placeholder below FIRST.
+# Secrets are NEVER placed here — only a public SSH key, which is not secret.
+# =============================================================================
+
+hostname: hermes-vps
+manage_etc_hosts: true
+timezone: Etc/UTC
+
+users:
+  # Primary operator account. Replace the placeholder key with YOUR public key.
+  - name: deploy
+    gecos: Operator
+    groups: [adm, sudo, systemd-journal]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 REPLACE_ME_WITH_YOUR_PUBLIC_KEY operator-laptop
+
+# Lock down SSH at the daemon level as well as user level.
+ssh_pwauth: false
+disable_root: true
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - ca-certificates
+  - git
+  - nftables
+  - at
+  - restic
+  - jq
+  - unzip
+  - unattended-upgrades
+  - needrestart
+
+# Automatic security updates. Interim until Ansible takes over config management.
+write_files:
+  - path: /etc/apt/apt.conf.d/50unattended-upgrades-security
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Allowed-Origins:
+        "${distro_id}:${distro_codename}-security";
+      Unattended-Upgrade::Package-Limits {"MaxWeight": 200};
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::SyslogEnable "true";
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  # Basic journald hygiene: persist logs, cap size (Phase 7 ships off-box).
+  - path: /etc/systemd/journald.conf.d/persist.conf
+    permissions: "0644"
+    content: |
+      [Journal]
+      Storage=persistent
+      SystemMaxUse=500M
+  # DNS pinning (panel finding): without this, systemd-resolved keeps the OVH
+  # DHCP upstreams and Tailscale's forwarded queries get dropped by the
+  # OUTPUT firewall. Only the firewall-approved resolvers below.
+  - path: /etc/systemd/resolved.conf.d/90-pin-dns.conf
+    permissions: "0644"
+    content: |
+      [Resolve]
+      DNS=[IP_ADDRESS] [IP_ADDRESS]
+      Domains=~.
+  # sshd drop-in (panel finding): Ubuntu's sshd_config has an Include for
+  # sshd_config.d/*.conf and first-value-wins; the main-file sed alone is
+  # nullified by any drop-in. Write ours with the 00- prefix so it wins.
+  - path: /etc/ssh/sshd_config.d/00-hardening.conf
+    permissions: "0600"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      AuthenticationMethods publickey
+  # Interim INPUT-only firewall (panel finding: no window with a wide-open
+  # box). scripts/setup-nftables.sh later replaces this with the full policy
+  # that narrows SSH to the tailnet.
+  - path: /etc/nftables.conf
+    permissions: "0700"
+    content: |
+      #!/usr/sbin/nft -f
+      # INTERIM bootstrap policy (replaced by scripts/setup-nftables.sh)
+      flush ruleset
+      table inet filter {
+          chain input {
+              type filter hook input priority 0; policy drop;
+              iifname "lo" accept
+              ct state established,related accept
+              ip protocol icmp icmp type echo-request limit rate 5/second accept
+              meta l4proto ipv6-icmp icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept
+              meta l4proto ipv6-icmp limit rate 5/second accept
+              tcp port 22 limit rate 10/second accept
+              limit rate 5/second counter log prefix "nft-in-drop: "
+              counter drop
+          }
+          chain forward {
+              type filter hook forward priority 0; policy drop;
+          }
+          chain output {
+              type filter hook output priority 0; policy accept;
+          }
+      }
+  # sysctl hardening baseline (Phase 0 safe subset; extended in Phase 3).
+  - path: /etc/sysctl.d/60-hardening.conf
+    permissions: "0644"
+    content: |
+      # Prevent IP spoofing / source routing
+      net.ipv4.conf.all.rp_filter = 2
+      net.ipv4.conf.default.rp_filter = 2
+      net.ipv4.conf.all.accept_source_route = 0
+      net.ipv4.conf.default.accept_source_route = 0
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv6.conf.all.accept_redirects = 0
+      # Ignore ICMP redirects from non-gateway hosts
+      net.ipv4.conf.all.secure_redirects = 0
+      # SYN flood protection
+      net.ipv4.tcp_syncookies = 1
+      # Log martian packets
+      net.ipv4.conf.all.log_martians = 1
+
+runcmd:
+  # Fail loudly if the operator forgot to replace the SSH key placeholder
+  # (panel finding: otherwise you get a keyless key-only box = reinstall).
+  - |
+    if grep -q "REPLACE_ME_WITH_YOUR_PUBLIC_KEY" /home/deploy/.ssh/authorized_keys 2>/dev/null; then
+      echo "ERROR: SSH key placeholder not replaced — replace it and reinstall via OVH panel." | tee /etc/ISSUE-PLACEHOLDER-KEY
+      logger -s -t cloud-init "PLACEHOLDER SSH KEY DETECTED — reinstall required"
+    fi
+  # Harden SSH: keys only, no root. (Drop-in 00-hardening.conf does the real
+  # work; daemon-level enforcement kept for image drift.)
+  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+  - sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  - systemctl restart ssh || systemctl restart sshd
+  - sysctl --system
+  - systemctl restart systemd-resolved || true
+  - systemctl enable --now nftables atd unattended-upgrades
+  - nft -f /etc/nftables.conf
+  # NOTE: the FULL policy (OUTPUT DROP, SSH via tailscale only) is applied by
+  # scripts/setup-nftables.sh AFTER first login, so the operator never gets
+  # locked out by a bootstrap typo. Outbound policy is applied there too,
+  # with the 5-minute timed-flush safety job.
+  - echo "Bootstrap complete. Continue with scripts/README.md step 2."
+
+final_message: |
+  CLOUD-INIT DONE. Log in as 'deploy' via your SSH key.
+  Next: scripts/README.md (Tailscale -> nftables -> backup).

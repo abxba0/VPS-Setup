@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily Restic backup to R2 (Phase 0.5)
+# Panel finding: do NOT use Requires= here — it would pull in and start the
+# service immediately whenever the timer unit starts.
+
+[Timer]
+# Daily at 03:40 UTC. Randomized delay to spread load.
+OnCalendar=*-*-* 03:40:00 UTC
+RandomizedDelaySec=15m
+# If the box was off/asleep, run immediately on boot (backup gaps = RPO risk)
+Persistent=true
+Unit=hermes-backup.service
+
+[Install]
+WantedBy=timers.target

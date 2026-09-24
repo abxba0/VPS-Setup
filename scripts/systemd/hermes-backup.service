@@ -1,0 +1,35 @@
+# systemd units for the Restic backup (Phase 0.5)
+# Install: see scripts/README.md step 4.
+
+[Unit]
+Description=Restic backup to R2 (Phase 0.5)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Narrow sandboxing: backup needs network + the paths it reads (reads are
+# permitted under ProtectSystem=strict; no ReadWritePaths needed — panel
+# finding: the previous RW grants were unused).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+LockPersonality=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+MemoryMax=512M
+TasksMax=64
+# Writable dirs the script actually needs (panel findings: flock lock + a
+# writable restic cache so index re-downloads don't hit R2 every run).
+RuntimeDirectory=restic-backup
+CacheDirectory=hermes-backup
+Environment=RESTIC_CACHE_DIR=/var/cache/hermes-backup
+ExecStart=/usr/local/sbin/hermes-backup.sh
