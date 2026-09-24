@@ -1,0 +1,2748 @@
+# Hermes Agent Secure VPS Platform
+
+**Version:** 0.3 (hybrid)
+**Status:** Architecture approved for implementation planning
+**Purpose:** Single source of truth for the secure, recoverable, low-cost Hermes Agent platform.
+
+**Supersedes:** v0.1 and v0.2 where they conflict. This document merges the full v0.1/v0.2 architecture (CONTEXT1), the v0.2 delta refinements (CONTEXT2), and the external review corrections (CONTEXT3). Where the sources conflict, CONTEXT3's review corrections win.
+
+**What changed in one line (from v0.1 to v0.2):** v0.1 secured the front door. v0.2 adds outbound control, approvals the agent cannot bypass, a threat model, and a recovery path that does not depend on the systems being recovered.
+
+**What changed in one line (v0.2 to v0.3):** The broker's Level 4 credentials move off the VPS, browser secrets are excluded from backups, the implementation phases/MCP-skill checklist/filesystem layout/model routing/decisions log are restored, and a minimum viable tier is defined for the 4 GB VPS.
+
+---
+
+# 1. Executive Summary
+
+This project is a self-hosted personal AI-agent platform built around Hermes Agent on a small OVH VPS.
+
+The platform is designed for:
+
+* AI research
+* web research
+* coding
+* terminal automation
+* browser automation
+* computer use
+* scheduled tasks
+* messaging
+* email
+* APIs
+* MCP
+* skills
+* persistent memory
+* human browser takeover
+* controlled autonomous workflows
+
+The architecture prioritises:
+
+1. security
+2. credential protection
+3. recoverability
+4. reliability
+5. privacy
+6. capability
+7. efficiency
+8. low cost
+
+The fundamental design principle is:
+
+> **The VPS is disposable. The identity, secrets, data, infrastructure definition, and recovery capability must survive its loss.**
+
+The golden rule underneath everything:
+
+> **Never rely on an AI agent to enforce a security boundary that the AI agent itself has the power to bypass.**
+
+---
+
+# 2. Core Architecture
+
+```text
+                         USER DEVICES
+                +---------------------------+
+                | Laptop / Desktop / Phone  |
+                | Passkey / FIDO2          |
+                +-------------+-------------+
+                              |
+                    Identity + MFA
+                              |
+                    +---------v---------+
+                    |     Tailscale     |
+                    +---------+---------+
+                              |
+                       Admin plane
+                              |
+       +----------------------v-----------------------+
+       |                    OVH VPS                   |
+       |                                               |
+       |  nftables / host firewall                    |
+       |  default-deny inbound                         |
+       |  default-deny agent egress                    |
+       |                                               |
+       |  +---------------+                           |
+       |  |   Tailscale   |                           |
+       |  +---------------+                           |
+       |                                               |
+       |  +---------------+                           |
+       |  |  cloudflared  |                           |
+       |  +-------+-------+                           |
+       |          |                                   |
+       |     Cloudflare Access                        |
+       |          |                                   |
+       |  +-------v--------------------------------+  |
+       |  |          Hermes Dashboard              |  |
+       |  |          OAuth / OIDC                  |  |
+       |  +----------------+-----------------------+  |
+       |                   |                          |
+       |  +----------------v-----------------------+  |
+       |  |            Hermes Agent                |  |
+       |  |                                        |  |
+       |  | personal / research / automation       |  |
+       |  |                                        |  |
+       |  | browser / terminal / tools / memory   |  |
+       |  +----------------+-----------------------+  |
+       |                   |                          |
+       |             Bot Screen                      |
+       |                   |                          |
+       |          Xvnc + Xfce locally                 |
+       |                                               |
+       |  +-----------------------+                    |
+       |  | External approval     |<----- user         |
+       |  | broker                 |                   |
+       |  +-----------+-----------+                    |
+       |              |                                |
+       |        privileged action                     |
+       |              |                                |
+       |  +-----------v-----------+                    |
+       |  | narrow privileged     |                    |
+       |  | action executor       |                    |
+       |  +-----------------------+                    |
+       |                                               |
+       |  +-----------------------+                    |
+       |  | Infisical             |                    |
+       |  | runtime secrets       |                    |
+       |  +-----------------------+                    |
+       |                                               |
+       |  +-----------------------+                    |
+       |  | Restic                |----------------+   |
+       |  +-----------------------+                |   |
+       +-------------------------------------------|---+
+                                                    |
+                                              encrypted backup
+                                                    |
+                                     +--------------v--------------+
+                                     |       Cloudflare R2          |
+                                     | private + retention/lock     |
+                                     +------------------------------+
+
+                      INDEPENDENT SYSTEMS
+                      ===================
+
+       +--------------------+       +----------------------+
+       | Healthchecks.io    |       | Offline recovery kit |
+       | dead-man's switch  |       | printed/encrypted    |
+       +--------------------+       | recovery material    |
+                                    +----------------------+
+
+       +-------------------------------------------+
+       | Off-box broker credential store           |
+       | (Level 4: Cloudflare, OVH, R2 admin —     |
+       |  never on the VPS; driven from laptop     |
+       |  via OpenTofu)                            |
+       +-------------------------------------------+
+```
+
+---
+
+# 3. Security Boundaries
+
+The platform has multiple independent security boundaries.
+
+## 3.1 Infrastructure identity
+
+Tailscale.
+
+Used for:
+
+* SSH
+* administrative access
+* private management
+* emergency access
+
+## 3.2 Public application identity
+
+Cloudflare Access.
+
+Used for:
+
+* Hermes dashboard
+* browser-facing application access
+
+## 3.3 Application identity
+
+Hermes OAuth/OIDC.
+
+Used for:
+
+* Hermes application authentication
+* defense in depth
+
+## 3.4 Secret identity
+
+Infisical.
+
+Used for:
+
+* runtime credentials
+* API keys
+* service credentials
+
+### 3.4.1 Machine credential (v0.3)
+
+Infisical needs a machine credential to fetch secrets at runtime.
+
+* Scope it **per profile**.
+* Inject secrets only into the process that needs them.
+* Never issue one shared machine credential for the whole box.
+
+## 3.5 Agent execution boundary
+
+Linux users + systemd sandboxing + rootless containers.
+
+Used for:
+
+* profile isolation
+* browser isolation
+* terminal isolation
+* filesystem separation
+
+## 3.6 Network boundary
+
+nftables + network namespaces/proxy policy.
+
+Used for:
+
+* inbound filtering
+* outbound filtering
+* agent egress control
+
+## 3.7 Privileged-action boundary
+
+External approval broker.
+
+Used for:
+
+* financial operations
+* credentials
+* DNS
+* Cloudflare
+* infrastructure
+* destructive actions
+
+**v0.3 change:** the broker's Level 4 credentials (Cloudflare admin, OVH, R2 admin) are kept **off the VPS entirely**. See §26.1.
+
+## 3.8 Recovery boundary
+
+Offline recovery material + independent provider access.
+
+Used for:
+
+* VPS loss
+* Tailscale lockout
+* IdP failure
+* Infisical failure
+* R2 credential loss
+
+---
+
+# 4. Threat Model
+
+The threat model is mandatory.
+
+## 4.1 Assets
+
+Protect:
+
+* API keys
+* OAuth tokens
+* browser sessions
+* cookies
+* email
+* personal files
+* Hermes memory
+* agent conversations
+* source code
+* infrastructure credentials
+* Cloudflare credentials
+* Tailscale credentials
+* R2 credentials
+* Infisical credentials
+* backups
+* domain/DNS
+* financial accounts
+* messaging accounts
+* model-provider accounts
+
+Condensed: **credentials and API keys, personal data, money and accounts, infrastructure control (Cloudflare, Tailscale, DNS), the agent's email/messaging identity, backups.**
+
+## 4.2 Adversaries and failure modes
+
+Consider:
+
+### A. Internet attacker (T1-adjacent)
+
+Attempts to exploit exposed services.
+
+### B. Malicious website
+
+Attempts browser exploitation or prompt injection.
+
+### C. Indirect prompt injector (T1)
+
+Places malicious instructions inside:
+
+* websites
+* emails
+* PDFs
+* GitHub issues
+* documents
+* search results
+* messages
+
+Worst case: agent leaks data or takes a harmful action.
+
+### D. Malicious MCP/tool (T2)
+
+Attempts to access secrets or perform unintended actions.
+Worst case: code execution or credential theft.
+
+### E. Compromised API/service (T4)
+
+Attempts to use the agent's credentials or environment.
+Worst case: silent persistence on the VPS.
+
+### F. Compromised agent session (T3)
+
+Attempts to escape intended permissions.
+Worst case: attacker acts as you or the agent.
+
+### G. Credential thief (T3)
+
+Attempts to steal:
+
+* API keys
+* OAuth tokens
+* browser cookies
+* SSH credentials
+* backup credentials
+
+### H. VPS compromise (T4)
+
+Attempts persistence, lateral movement, or backup destruction.
+
+### I. Operator error (T5)
+
+Examples:
+
+* deleting backups
+* exposing a port
+* committing a secret
+* breaking authentication
+* bad firewall rules
+* lockout from VPS, IdP, or secrets
+
+### J. Provider failure (T5)
+
+Examples:
+
+* OVH outage
+* Cloudflare outage
+* Tailscale outage
+* Infisical outage
+* identity-provider outage
+* R2 outage
+
+### K. Backup destruction (T6)
+
+Ransomware or stolen R2 keys erase history.
+
+### L. Runaway cost (T7)
+
+A looping scheduled task burns the API budget.
+
+**Rule:** any new component must state which threat it reduces.
+
+---
+
+# 5. Worst-Case Scenarios
+
+The design must consider:
+
+1. Prompt injection causes data exfiltration.
+2. Agent obtains a privileged credential.
+3. Browser session gives access to a personal account.
+4. Agent sends money.
+5. Agent changes DNS.
+6. Agent deletes backups.
+7. VPS is compromised.
+8. Tailscale identity becomes unavailable.
+9. Cloudflare account becomes unavailable.
+10. Infisical becomes unavailable.
+11. R2 credentials are compromised.
+12. An attacker destroys both the VPS and accessible backups.
+13. A scheduled job loops and creates a large API bill.
+14. A malicious skill/MCP gains filesystem or network access.
+15. A browser exploit escapes its intended environment.
+
+---
+
+# 6. Outbound Network Security
+
+## Requirement
+
+Outbound traffic must not be unrestricted.
+
+Inbound filtering alone is insufficient. Outbound is how a hijacked agent leaks data.
+
+---
+
+## 6.1 Host firewall
+
+Use nftables.
+
+Default:
+
+```text
+INPUT   DROP
+FORWARD DROP
+OUTPUT  DROP
+```
+
+Then explicitly allow required traffic.
+
+### 6.1.1 Safe rule testing (v0.3)
+
+Test `OUTPUT DROP` rules with an `at` job that flushes them after a few minutes, so a bad rule cannot lock you out:
+
+```text
+apply rules
+schedule: at now + 5 minutes -> flush rules / restore known-good
+test
+confirm before the deadline (or let the flush run)
+```
+
+---
+
+# 7. Infrastructure Egress
+
+Infrastructure services need carefully defined egress.
+
+Examples:
+
+* DNS
+* Tailscale
+* Cloudflare Tunnel
+* package repositories
+* time synchronisation
+* Infisical
+* backup storage
+* monitoring
+* model providers
+
+Do not blindly allow arbitrary Internet access from every process.
+
+---
+
+# 8. Agent Egress
+
+Agent-originated traffic receives a stricter policy.
+
+Preferred architecture:
+
+```text
+Hermes profile
+      |
+Linux user (meta skuid)
+      |
+network namespace
+      |
+egress proxy/policy gateway
+      |
+domain/action policy
+      |
+Internet
+```
+
+The policy should support:
+
+* allowed domains
+* blocked domains
+* blocked private networks
+* blocked localhost
+* blocked metadata endpoints
+* blocked infrastructure interfaces
+* logging
+* rate limits where practical
+
+Per-profile policy:
+
+* Default-deny outbound with nftables.
+* Match by Linux user (`meta skuid`) so each profile gets its own outbound policy.
+* Strict profiles (personal, automation): allowlist of LLM APIs, Infisical, Cloudflare, R2, and named service domains.
+* Research profile: open web reads through a logging proxy, with no credentials and no send-capable tools.
+* Log blocked egress and alert on repeated denials.
+* DNS: use a resolver you control or filter, and log queries for strict profiles.
+
+---
+
+# 9. SSRF Protection
+
+Hermes already provides URL validation/SSRF protections.
+
+Keep them enabled. **(v0.3 caveat: see §79 — verify against current Hermes docs before designing around this.)**
+
+Add infrastructure-level protection as a second boundary.
+
+Block access from agent workloads to:
+
+```text
+10.0.0.0/8
+127.0.0.0/8
+172.16.0.0/12
+192.168.0.0/16
+169.254.169.254
+::1
+fc00::/7
+```
+
+and other local/private destinations unless explicitly required.
+
+---
+
+# 10. Cloudflare Access Origin Validation
+
+Do not assume:
+
+> "The request arrived through Cloudflare Tunnel, therefore it is trusted."
+
+The origin should validate the Cloudflare Access JWT where applicable.
+
+Validate:
+
+* signature
+* issuer
+* audience
+* expiry
+* relevant identity claims
+
+Prefer:
+
+```text
+Cf-Access-Jwt-Assertion
+```
+
+over trusting the browser cookie.
+
+Additionally (v0.2):
+
+* Short Access session lifetime for the dashboard.
+* Separate, stricter Access policy for any admin or approval routes.
+
+---
+
+# 11. Tailscale Identity
+
+Use:
+
+* Tailscale grants
+* device tags
+* least privilege
+* MFA/passkeys
+* device posture where practical
+* check mode for sensitive SSH sessions
+
+For the permanent server:
+
+```text
+tag:server   (e.g. tag:hermes-vps)
+```
+
+and carefully defined grants. Tagging means the node is not tied to a user's key expiry.
+
+---
+
+# 12. Tailscale Key Expiry
+
+The server is a special case.
+
+Because it must remain recoverable and available, disabling key expiry for the tagged server may be appropriate.
+
+This is an intentional exception.
+
+Document:
+
+```text
+WHY:
+Server must remain reachable for unattended operation.
+
+RISK:
+Compromised node identity remains valid longer.
+
+MITIGATION:
+- tagged device
+- restricted grants
+- MFA for operators
+- independent OVH console/rescue access
+- monitoring
+- credential rotation
+```
+
+---
+
+# 13. Independent Emergency Access (Break-Glass)
+
+Tailscale must not be the only way back into the machine.
+
+Maintain:
+
+* OVH control panel access
+* OVH KVM/console if available
+* OVH rescue mode
+* documented recovery procedure
+
+This protects against:
+
+* Tailscale failure
+* identity-provider failure
+* bad firewall deployment
+* accidental Tailscale configuration
+* expired/invalid credentials
+
+Break-glass specifics (v0.2):
+
+* Document access if Tailscale, Cloudflare, or the IdP is unavailable: the OVH console/KVM and rescue mode, protected by a hardware key and a separate strong credential.
+* Two hardware keys registered, one stored offline.
+* **Test the break-glass path once per quarter.**
+
+---
+
+# 14. Strong Human Authentication
+
+Prefer:
+
+* passkeys
+* FIDO2 hardware keys
+
+over SMS.
+
+TOTP may remain as a backup where necessary.
+
+Maintain at least two independent authentication/recovery methods.
+
+---
+
+# 15. Offline Recovery Kit
+
+## 15.1 The circular-dependency problem
+
+**Problem:** restoring needs the Restic password, Infisical access, and IdP recovery codes. If those exist only inside the systems you are recovering, you cannot recover.
+
+**Fix:** recovery escrow, offline, never on the VPS.
+
+The recovery system must not depend exclusively on the systems being recovered.
+
+## 15.2 Contents
+
+Maintain an offline recovery kit containing, as appropriate:
+
+* OVH account recovery information
+* Tailscale recovery information
+* IdP recovery codes and hardware-key backup
+* Infisical recovery/admin credentials
+* Restic repository password
+* R2 restore-capable credential
+* Cloudflare and OVH account recovery details
+* domain/DNS recovery information
+* emergency contact information
+* architecture diagram
+* recovery procedure
+* latest known-good configuration commit
+
+## 15.3 Storage requirements
+
+The kit must be:
+
+* encrypted
+* offline
+* separately stored (password manager **plus** a printed/offline copy in a separate physical location)
+* accessible without the VPS
+* accessible without Infisical
+* reviewed twice a year
+
+Do not put raw production secrets into ordinary Git.
+
+---
+
+# 16. Restic Recovery Separation
+
+Separate:
+
+### Backup writer
+
+Can:
+
+* create snapshots
+* read its own repository as necessary
+
+Cannot:
+
+* prune
+* delete historical backups
+* destroy repository
+
+### Backup administrator
+
+Can:
+
+* `forget`
+* `prune`
+* maintenance
+* restore
+
+Keep administrative backup credentials off the VPS where possible. Prune/maintenance runs from a trusted machine, not the VPS.
+
+---
+
+# 17. R2 Backup Protection
+
+Use:
+
+* bucket-scoped credentials
+* least privilege
+* separate backup credentials
+* retention policies
+* bucket locks where appropriate
+
+R2 supports bucket locks that prevent deletion/overwriting for defined retention periods.
+
+The backup writer must not possess unrestricted account-wide Cloudflare permissions.
+
+**v0.3 addition:** exclude browser profiles and cookies from Restic. Otherwise a leaked backup is also a leaked login.
+
+---
+
+# 18. Backup Repository Checks
+
+Schedule:
+
+```text
+restic check
+```
+
+periodically, plus a small `--read-data-subset` check regularly.
+
+Monitor the result externally.
+
+A failed repository check is an incident requiring investigation.
+
+---
+
+# 19. Backup Retention
+
+Initial policy:
+
+```text
+Daily:
+7
+
+Weekly:
+4
+
+Monthly:
+6–12
+```
+
+Review based on:
+
+* data volume
+* recovery requirements
+* privacy requirements
+* cost
+
+Remember:
+
+> Backups retain information that may have been deleted from the live system.
+
+Retention is therefore also a privacy policy. Backup retention must match data retention — set it deliberately and document it.
+
+---
+
+# 20. Backup Dead-Man's Switch
+
+Use an external service such as Healthchecks.io.
+
+Example:
+
+```text
+backup job
+   |
+   +-- success → external heartbeat
+   |
+   +-- failure/no heartbeat
+              |
+              v
+       external alert
+```
+
+This detects:
+
+* VPS outage
+* backup failure
+* scheduler failure
+* hung jobs
+* network failure
+
+The monitoring system must remain independent of the VPS.
+
+---
+
+# 21. External Monitoring
+
+The VPS must not be the only place where monitoring exists. On-box monitoring dies with the box.
+
+Use:
+
+### On VPS
+
+* system metrics
+* journal
+* service health
+* local alerts
+
+### Off VPS
+
+* backup heartbeat
+* uptime/dead-man's switch
+* critical service heartbeat
+* optional external logs
+
+Alert on (v0.2):
+
+* canary token use
+* blocked-egress spikes
+* new listening ports
+* broker approvals outside normal hours
+* spend threshold breaches
+
+Repeated service restarts alert a human and get a systemd `StartLimit` policy.
+
+At minimum monitor:
+
+* backup heartbeat
+* VPS availability
+* critical scheduled jobs
+* certificate expiry
+* important service heartbeats
+
+Healthchecks.io can provide the external heartbeat/dead-man's-switch layer.
+
+---
+
+# 22. Audit Log Offloading
+
+Security-sensitive logs should be copied off-box, append-only where possible.
+
+Examples:
+
+* authentication
+* sudo
+* privileged action requests
+* approval decisions
+* broker logs
+* backup events
+* Cloudflare events
+* significant agent activity
+
+Use redaction.
+
+Never ship raw secrets.
+
+Add auditd rules (v0.2) for:
+
+* sudo
+* new listening ports
+* changes to `/etc/systemd`, firewall, and SSH config
+
+---
+
+# 23. Canary Tokens
+
+Deploy canary tokens in carefully selected locations (fake API keys, fake files in agent-reachable locations).
+
+Purpose:
+
+Detect unexpected access to:
+
+* sensitive files
+* credential stores
+* high-value directories
+
+Any use triggers an alert.
+
+Canaries should be designed so they do not themselves become secrets or attack paths.
+
+Canaries complement, but do not replace, normal monitoring.
+
+---
+
+# 24. Agent Approval Architecture
+
+This is a critical change.
+
+Hermes' internal approval system remains enabled.
+
+But:
+
+> **Hermes is not the final authority for privileged actions.**
+
+**Problem:** if Hermes decides which actions are risky, the model is grading its own homework, and an injected agent can skip its own check.
+
+The model must not be able to:
+
+```text
+decide action is safe
+       |
+approve itself
+       |
+execute privileged action
+```
+
+---
+
+# 25. External Approval Broker
+
+Introduce a small privileged broker.
+
+Conceptual:
+
+```text
+Hermes
+   |
+   | request:
+   | exact action
+   | arguments
+   | target
+   | reason
+   v
+Approval Broker
+   |
+   | notification (separate device/channel)
+   v
+Human
+   |
+approve / deny
+   |
+   v
+Broker
+   |
+narrow privileged operation
+   |
+target system
+```
+
+The broker, not Hermes, owns privileged credentials (with the v0.3 exception in §25.1).
+
+Design requirements:
+
+* small codebase, single-purpose
+* no LLM
+* no arbitrary shell execution
+* explicit operation schemas (fixed set of actions)
+* short-lived, single-use approval tokens
+* strong authentication
+* audit logging (shipped off-box)
+* rate limits
+* replay protection
+* runs as its own user
+
+Approval specifics:
+
+* Approval shows the **exact** action and parameters (amount, recipient, record, command).
+* Approval is **single-use** and **expires** quickly.
+* Approval happens **out-of-band** (for example a Telegram button or push prompt on a different device), never inside the agent's own chat. A simple "YES" message is insufficient.
+* Level 2 actions get allowlists and rate limits instead of per-action approval.
+* **Keep Level 3/4 approvals rare** — per-approval fatigue, you will start rubber-stamping them.
+
+This becomes one of the most security-critical components. Keep it intentionally boring.
+
+## 25.1 Broker Credential Location (v0.3, from review)
+
+**Problem:** the broker runs on the same VPS, so a root compromise gets everything it holds.
+
+**Fix:**
+
+* Keep **Level 4 credentials** (Cloudflare, OVH, R2 admin) **off the VPS entirely**. Make those changes yourself through OpenTofu from your laptop.
+* Only automate Level 3/4 actions you genuinely want delegated; run that part of the broker on separate infrastructure if you can.
+* Level 3 credentials that remain delegated live **only** in the broker, never in agent contexts, env vars, or files the agent can read.
+
+---
+
+# 26. Approval Request
+
+Each approval request must contain:
+
+* action
+* exact arguments
+* target
+* account
+* requested credential
+* reason
+* originating profile
+* timestamp
+* expiry
+* risk category
+
+Example:
+
+```text
+REQUEST
+
+Action:
+Change DNS record
+
+Zone:
+example.com
+
+Record:
+hermes.example.com
+
+Old value:
+...
+
+New value:
+...
+
+Reason:
+...
+
+Expires:
+5 minutes
+
+Approve?
+[ APPROVE ] [ DENY ]
+```
+
+No ambiguous approvals such as:
+
+> "Allow Hermes to do DNS."
+
+---
+
+# 27. Approval Token
+
+Approval should be:
+
+* short-lived
+* action-specific
+* target-specific
+* non-reusable
+* cryptographically verifiable
+* logged
+
+The approval should not grant a general privileged session.
+
+Approval must bind to:
+
+```text
+exact action
++
+exact target
++
+exact parameters
++
+short expiry
+```
+
+---
+
+# 28. Privileged Credentials
+
+Hermes should never possess:
+
+* unrestricted Cloudflare API token
+* unrestricted DNS credentials
+* OVH master credentials
+* unrestricted R2 administration
+* unrestricted Infisical administration
+* payment credentials
+* unrestricted infrastructure credentials
+
+The broker owns or accesses them — and for Level 4, even the broker does not hold them on the VPS (§25.1).
+
+Broker credential storage rules:
+
+* unavailable to Hermes
+* unavailable to browser
+* unavailable to normal agent containers
+* accessible only to the broker
+* retrieved from secure storage or held in tightly controlled runtime memory
+
+---
+
+# 28.1 Audit Trail
+
+Record:
+
+```text
+request ID
+timestamp
+profile
+requested action
+target
+arguments
+human identity
+approval/denial
+executor
+result
+```
+
+Audit logs must be tamper-resistant and preferably copied off-box.
+
+---
+
+# 29. Privileged Executor
+
+The privileged executor should expose narrow operations.
+
+Examples:
+
+```text
+create_dns_record()
+delete_dns_record()
+rotate_specific_secret()
+restart_specific_service()
+restore_specific_backup()
+```
+
+Avoid:
+
+```text
+run_as_root(command_string)
+```
+
+Prefer typed operations with validation.
+
+---
+
+# 30. Agent Linux Isolation
+
+Each major Hermes profile should use a separate Linux identity where practical.
+
+Example:
+
+```text
+hermes-personal
+hermes-research
+hermes-automation
+hermes-highrisk
+```
+
+Benefits:
+
+* separate filesystem permissions
+* separate browser data
+* separate process ownership
+* separate X resources
+* separate credentials
+* smaller blast radius
+
+Each profile gets its **own Linux user**, workspace, browser profile, and secret scope.
+
+---
+
+# 31. systemd Sandboxing
+
+Use systemd security controls where compatible:
+
+* `NoNewPrivileges=yes`
+* `ProtectSystem=strict`
+* `ProtectHome=read-only` (or tmpfs)
+* `PrivateTmp=yes`
+* `PrivateDevices=yes`
+* `RestrictSUIDSGID=yes`
+* `RestrictNamespaces=` where appropriate
+* `CapabilityBoundingSet=`
+* `SystemCallFilter=` where practical
+* `MemoryMax=` (on the browser especially)
+* `TasksMax=`
+* `ReadWritePaths=` set explicitly
+* CPU limits where useful
+
+Apply incrementally and test Hermes functionality after each hardening step.
+
+---
+
+# 32. Browser Isolation
+
+Browsers should run in rootless containers **from day one** (not a future item).
+
+Use:
+
+* rootless Docker
+* separate container per trust level
+* restricted mounts
+* no host Docker socket
+* restricted network
+* disposable browser profile where possible
+* limited filesystem visibility
+
+Rootless containers reduce the consequences of a container/runtime compromise compared with a rootful container architecture.
+
+---
+
+# 33. Terminal Isolation
+
+Terminal workloads should also be isolated where practical.
+
+Do not give an agent terminal process:
+
+```text
+root
++
+entire host filesystem
++
+unrestricted network
+```
+
+Preferred:
+
+```text
+Hermes
+ |
+terminal container
+ |
+limited filesystem
+ |
+restricted network
+```
+
+Downloads land in a quarantine directory and are never auto-executed.
+
+---
+
+# 34. Private Data / Untrusted Data / Outbound Action Separation
+
+## 34.1 The Profile Trust Rule
+
+No single profile may combine all three of:
+
+1. access to private data or credentials
+2. exposure to untrusted content
+3. ability to communicate outward
+
+Two of three is acceptable. Three is not. This combination creates a direct data-exfiltration path.
+
+## 34.2 Profile trust table
+
+| Profile | Private data | Untrusted content | Outbound | Egress policy |
+| --- | --- | --- | --- | --- |
+| personal | yes | no | limited | strict allowlist |
+| research | no | yes | web read only | open web, no credentials, no send tools |
+| automation | scoped | limited | specific APIs | strict allowlist |
+| high-risk | temporary | no | via broker only | broker only |
+
+---
+
+# 35. Profile Trust Model
+
+## Personal
+
+Moderate trust.
+
+May access selected personal context.
+
+Limited external action.
+
+## Research
+
+Low trust.
+
+Untrusted web content expected.
+
+Minimal private data.
+
+No privileged credentials.
+
+## Automation
+
+Medium trust.
+
+API-specific credentials only.
+
+Restricted filesystem.
+
+## High-risk
+
+Very low trust.
+
+Strong isolation.
+
+No personal data.
+
+No unrestricted credentials.
+
+Human approval.
+
+---
+
+# 36. Browser Session Policy
+
+Avoid logging into sensitive personal accounts through Bot Screen unless necessary.
+
+Prefer:
+
+* scoped OAuth
+* API tokens
+* dedicated accounts
+* temporary credentials
+* limited permissions
+
+If a human logs into a sensitive site through Bot Screen:
+
+1. perform the required operation
+2. log out where possible
+3. clear session/cookies where appropriate
+4. terminate the browser session
+5. destroy temporary credentials if used
+6. do not persist high-value sessions
+
+Remember that the session lives on the gateway host.
+
+Bot Screen sessions are separate per profile and bound to localhost only.
+
+---
+
+# 37. Hermes Built-in Security
+
+Keep Hermes security features enabled.
+
+Important controls include:
+
+* dangerous-command approvals
+* manual approval mode where appropriate
+* file-write safety
+* write sandbox
+* container isolation
+* MCP credential filtering
+* context-file scanning
+* cross-session isolation
+* terminal working-directory validation
+* SSRF protection
+* website blocklists
+* messaging allowlists
+* DM pairing
+
+These are defense layers.
+
+They do not replace host/network isolation.
+
+**v0.3 caveat:** see §79 — Hermes-specific claims must be verified against current docs.
+
+---
+
+# 38. Website Blocklist
+
+Use Hermes website blocklist to prevent access to:
+
+* internal dashboards
+* cloud provider admin pages
+* secret-management interfaces
+* private infrastructure
+* sensitive domains
+
+The network layer should provide a second boundary.
+
+---
+
+# 39. Messaging Security
+
+Use explicit allowlists.
+
+Never use open access.
+
+For each platform:
+
+```text
+unknown sender
+     |
+     v
+deny / pairing
+```
+
+Only approved identities can issue commands.
+
+---
+
+# 40. Email Security
+
+Use a dedicated agent mailbox.
+
+Never assume the agent should access the personal mailbox.
+
+Prefer:
+
+```text
+agent@domain
+```
+
+with:
+
+* limited scope
+* approved senders
+* approval for sensitive outgoing messages
+
+---
+
+# 41. API Cost Controls
+
+Every external API should have:
+
+* spending limit
+* rate limit
+* key-level limit where supported
+* profile-level budget
+* alert threshold
+
+Cost and runaway controls (v0.2):
+
+* Hard monthly spend cap **per API key and per profile**, with a provider-side limit where supported.
+* Every scheduled task has: max runtime, max tool calls, max tokens, and a kill switch.
+* Alert at 50% and 80% of budget. Auto-disable the key at 100%.
+* Route by model tier (§44) and log tokens per task to find waste.
+
+---
+
+# 42. Scheduled Job Safety
+
+Every autonomous scheduled task must have:
+
+* maximum runtime
+* maximum frequency
+* max tool calls
+* max tokens
+* allowed tools
+* allowed domains
+* allowed credentials
+* cost budget
+* output limits
+* failure handling
+* kill switch
+* external monitoring
+
+A looping scheduled job is considered a high-probability operational failure.
+
+---
+
+# 43. API Key Segmentation
+
+Use different API keys for:
+
+```text
+personal
+research
+automation
+development
+```
+
+Never use one master API key everywhere.
+
+If a profile is compromised:
+
+```text
+revoke one key
+```
+
+rather than:
+
+```text
+revoke everything
+```
+
+---
+
+# 44. Model Routing
+
+Route by model tier:
+
+* cheap/fast models for routine, low-risk tasks (drafts, classification, summarisation)
+* strong models for high-risk reasoning and privileged-action preparation
+* log tokens per task to find waste
+
+Do not spend premium-model tokens where a cheap tier is sufficient.
+
+---
+
+# 45. LLM Provider Privacy
+
+For every model provider document:
+
+* training policy
+* data-retention policy
+* zero-data-retention availability
+* logging policy
+* abuse-monitoring policy
+* geographic processing / region
+* enterprise/API differences
+
+Do not assume that all providers have identical policies.
+
+Use API/enterprise privacy controls where available. Enable the strictest available setting (ZDR/no-training).
+
+Review policies whenever providers change terms.
+
+---
+
+# 46. Logging Privacy
+
+Logs must be redacted.
+
+Never intentionally log:
+
+* API keys
+* passwords
+* OAuth tokens
+* session cookies
+* full authentication headers
+* sensitive personal data
+
+Use structured logging.
+
+Define retention.
+
+Redact secrets and personal data from logs before storage.
+
+---
+
+# 47. Data Retention
+
+Define retention separately for:
+
+* Hermes conversations
+* browser data
+* downloads
+* agent logs
+* security logs
+* audit logs
+* backups
+
+Deletion from the live system does not necessarily delete backup copies. Deleted data persists in old snapshots until they expire.
+
+## 47.1 Data Map (v0.2)
+
+Publish a short data map: what is stored, where, for how long, and who can read it.
+
+---
+
+# 48. Infrastructure as Code
+
+Use:
+
+## OpenTofu
+
+For:
+
+* OVH infrastructure where provider support permits
+* Cloudflare resources (tunnel, DNS, Access policies)
+* DNS
+* R2 configuration where supported
+* Tailscale (tags, grants)
+* infrastructure relationships
+
+## Ansible
+
+For:
+
+* OS configuration
+* users
+* packages
+* firewall
+* systemd
+* Hermes installation/configuration
+* hardening
+* monitoring
+
+## cloud-init
+
+For:
+
+* initial bootstrap
+* initial user
+* first network setup
+* initial package setup
+
+## Secrets in IaC
+
+Secrets are injected at runtime from Infisical, never rendered into Git.
+
+## Updates
+
+* Renovate or Dependabot for update proposals, applied through the staging path (§51).
+
+---
+
+# 49. Git Security
+
+Use:
+
+* pre-commit hooks
+* secret scanning
+* Gitleaks (pre-commit **and** in CI)
+* dependency/version pinning
+* signed commits where practical
+
+Never commit:
+
+* secrets
+* tokens
+* passwords
+* recovery codes
+* private keys
+* production `.env`
+
+---
+
+# 50. Version Pinning
+
+Pin versions for:
+
+* Hermes
+* cloudflared
+* browser
+* container images
+* OS packages where appropriate
+* Ansible collections
+* OpenTofu providers
+* backup tooling
+
+Define a controlled update process.
+
+---
+
+# 51. Update Workflow
+
+Before update:
+
+```text
+backup
+snapshot
+verify recovery
+```
+
+Then:
+
+```text
+staging
+   |
+test
+   |
+production
+```
+
+After update:
+
+```text
+health check
+   |
+monitor
+   |
+confirm
+```
+
+---
+
+# 52. OVH Snapshot Strategy
+
+Before every major upgrade:
+
+```text
+OVH snapshot
++
+Restic backup
+```
+
+The snapshot is for fast rollback.
+
+Restic is for durable disaster recovery.
+
+Neither replaces the other.
+
+---
+
+# 53. Recovery Independence
+
+Recovery must work if the following are unavailable:
+
+* Hermes
+* VPS
+* Tailscale
+* Infisical
+* Cloudflare
+* normal browser sessions
+* primary identity provider
+
+At minimum, retain an independent recovery path to:
+
+* OVH
+* domain
+* backup repository
+* secret recovery
+* identity recovery
+
+---
+
+# 54. Recovery Time Objectives
+
+Initial targets:
+
+```text
+RPO:
+24 hours maximum
+```
+
+Preferred:
+
+```text
+RPO:
+< 6 hours
+```
+
+Tighten RPO for agent memory if it proves valuable.
+
+Initial:
+
+```text
+RTO:
+4 hours
+```
+
+Target after rebuild automation:
+
+```text
+RTO:
+1–2 hours
+```
+
+These are operational targets, not guarantees. Confirm or adjust, then measure them through actual rebuild tests.
+
+---
+
+# 55. Rebuild Testing / Scheduled Rebuild
+
+Periodically (quarterly to start):
+
+1. create temporary VPS
+2. bootstrap from IaC + cloud-init
+3. restore from backups
+4. verify
+5. destroy
+
+The test is successful only if the platform becomes usable without undocumented manual steps.
+
+This scheduled rebuild doubles as the DR test.
+
+---
+
+# 56. Performance Controls
+
+For the 4 GB VPS:
+
+* zram
+* conservative swap
+* early OOM handling (earlyoom — so the browser is killed before the system stalls)
+* systemd `MemoryMax`
+* `TasksMax`
+* browser memory limits
+* idle Bot Screen shutdown
+* browser lifecycle management
+
+Use measurements rather than guessing.
+
+---
+
+# 57. Browser Memory
+
+Browsers are expected to be one of the largest RAM consumers.
+
+Set:
+
+```text
+browser MemoryMax
+```
+
+and use controlled concurrency.
+
+Prefer one headed browser session at a time on the 4 GB VPS.
+
+Upgrade to 8 GB when workload requires it.
+
+---
+
+# 58. zram
+
+Use zram as a fast compressed memory buffer.
+
+Combine with:
+
+* swap
+* earlyoom
+* cgroup memory limits
+
+The goal is graceful degradation rather than sudden OOM termination.
+
+---
+
+# 59. Cost Architecture
+
+Initial target:
+
+```text
+OVH VPS:
+~£5/month class
+
+Upgrade:
+~£8–£10/month class
+```
+
+Additional costs:
+
+* domain
+* R2 usage
+* model/API usage
+* optional monitoring
+* optional second backup
+
+Do not add expensive infrastructure without measurable benefit.
+
+---
+
+# 60. Scaling
+
+Initial:
+
+```text
+1 VPS
+```
+
+Then:
+
+```text
+4 GB
+  ↓
+8 GB
+```
+
+Then, if necessary:
+
+```text
+control plane
++
+agent worker
++
+browser worker
+```
+
+(and broker on separate infrastructure, per §25.1)
+
+Do not introduce Kubernetes simply because it is possible.
+
+---
+
+# 61. High-Risk Action Categories
+
+Level 0:
+
+* read
+* research
+* analyse
+
+Level 1:
+
+* create/edit non-sensitive files
+* notes
+* drafts
+
+Level 2:
+
+* send messages
+* email
+* modify external documents
+
+Level 3:
+
+* financial activity
+* account changes
+* credential changes
+
+Level 4:
+
+* DNS
+* Cloudflare
+* firewall
+* infrastructure
+* secrets
+* backup destruction
+* root/system changes
+
+Levels 3 and 4 require external approval. Keep them rare (§25).
+
+---
+
+# 62. Human Approval Requirement
+
+The agent cannot:
+
+```text
+classify
+→ approve
+→ execute
+```
+
+a Level 3/4 action.
+
+Instead:
+
+```text
+agent
+→ request
+→ external broker
+→ human (out-of-band)
+→ signed approval
+→ privileged executor
+→ audit
+```
+
+Hermes' own approval remains as an additional safety layer.
+
+---
+
+# 63. Emergency Kill Switch
+
+Must be executable without trusting Hermes.
+
+Actions:
+
+```text
+stop Hermes
+stop browser
+stop scheduled jobs
+disable external application access
+revoke relevant credentials
+```
+
+The kill switch must be available through:
+
+* Tailscale/admin path
+* OVH console/rescue path
+
+where possible.
+
+---
+
+# 64. Incident Response
+
+## Suspected agent compromise
+
+1. stop agent
+2. stop browser
+3. revoke profile credentials
+4. inspect logs
+5. inspect network events
+6. rotate affected credentials
+7. inspect backups
+8. determine blast radius
+
+## Suspected VPS compromise
+
+1. isolate
+2. preserve evidence where practical
+3. revoke credentials
+4. revoke Tailscale access if necessary
+5. disable Cloudflare access if necessary
+6. provision new VPS
+7. restore known-good state
+8. rotate secrets
+9. verify
+
+---
+
+# 65. Privacy Incident
+
+If sensitive data is exposed:
+
+1. identify provider
+2. identify data
+3. identify time period
+4. revoke credentials
+5. rotate tokens
+6. delete unnecessary copies
+7. inspect logs
+8. review backup retention
+9. document incident
+
+---
+
+# 66. Five-Layer Backup Strategy
+
+```text
+1. OVH snapshot
+      ↓
+2. Hermes-native backup
+      ↓
+3. Restic encrypted backup (excluding browser profiles/cookies)
+      ↓
+4. R2 protected repository
+      ↓
+5. independent secondary backup (different provider and credentials, append-only if possible)
+```
+
+Each serves a different purpose.
+
+---
+
+# 67. Backup Credentials
+
+### VPS backup credential
+
+Can:
+
+* write
+
+Cannot:
+
+* prune
+* destroy
+* administer bucket
+
+### Recovery credential
+
+Stored offline.
+
+Can:
+
+* restore
+* perform repository maintenance
+
+### Prune/maintenance credential
+
+Used from a trusted machine, not the VPS.
+
+### Cloudflare administrator
+
+Separate.
+
+Never place this on the VPS.
+
+---
+
+# 68. R2 Lifecycle
+
+Use lifecycle policies to manage retention/cost.
+
+Ensure lifecycle deletion does not accidentally undermine required recovery retention.
+
+Bucket locks should be used where appropriate.
+
+---
+
+# 69. Agent Data Architecture
+
+Separate:
+
+```text
+personal data
+agent data
+temporary data
+browser data
+logs
+backups
+```
+
+Do not merge everything into one unrestricted directory.
+
+---
+
+# 70. Filesystem Layout
+
+Proposed layout (illustrative — adapt during implementation):
+
+```text
+/srv/hermes/
+  personal/            # hermes-personal user; private data, no untrusted content
+  research/            # hermes-research user; untrusted content, no private data
+  automation/          # hermes-automation user; scoped API work
+  highrisk/            # hermes-highrisk user; temporary, broker-only egress
+  quarantine/          # downloads land here; never auto-executed
+  backups/staging/     # pre-backup staging
+
+/var/lib/hermes/        # Hermes core state (owned by hermes service user)
+/var/log/hermes/        # agent logs (redacted, shipped off-box)
+
+# per-profile browser data (isolated, EXCLUDED from Restic):
+/srv/hermes/<profile>/browser/
+/srv/hermes/<profile>/cookies/
+
+# never visible to agent users:
+/etc/nftables.conf
+/etc/systemd/system/hermes*
+/root/                  # never
+```
+
+Rules:
+
+* profile directories are owned by their profile user, mode 0700
+* no profile can read another profile's directory
+* browser data and cookies are excluded from backups
+* privileged configs live outside every agent's reach
+
+---
+
+# 71. MCP / Skill Vetting Checklist
+
+No unreviewed MCP. No unreviewed skill. Before adding any MCP server or skill:
+
+```text
+[ ] What code runs? Where does it come from? (repo, publisher, commit pinned?)
+[ ] What credentials can it see? (env, files, Hermes secret scope)
+[ ] What network access does it need? (domains, direction, justify each)
+[ ] What filesystem access does it need? (paths, justify each)
+[ ] What tools does it expose? Any that send data outward?
+[ ] Does it survive the profile trust rule? (§34 — no private data + untrusted content + outbound in one profile)
+[ ] Which threat(s) from §4.2 does this help with — or worsen?
+[ ] What is the blast radius if it is malicious or compromised?
+[ ] How do we remove/rotate if we revoke it?
+[ ] Re-review after every version bump.
+```
+
+A skill/MCP that fails the trust rule must run in the high-risk profile or not at all.
+
+---
+
+# 72. Threat-Model Review
+
+Review the threat model after:
+
+* new MCP
+* new skill
+* new messaging platform
+* new browser capability
+* new privileged operation
+* new credential
+* new public endpoint
+* major Hermes update
+* major OS update
+
+---
+
+# 73. Five-Expert Review Model
+
+Every significant architectural change must be reviewed by:
+
+1. Cloud/security
+2. Linux/SRE
+3. AI-agent security
+4. DevOps
+5. Privacy/data
+
+## 73.1 One-Person Review Checklist (v0.3)
+
+The fifteen-expert review is overkill for one person. Use this one-page checklist instead — it gives most of the value:
+
+```text
+SECURITY REVIEW (one page, run before any significant change)
+
+1. BOUNDARY: Which security boundary does this sit behind? Can the agent bypass it?
+2. THREAT: Which threat(s) from §4.2 does this reduce? (If none — why add it?)
+3. TRUST RULE: Does it create a profile with private data + untrusted content + outbound? (§34)
+4. CREDENTIALS: What new credentials exist? Where do they live? Who/what can read them?
+5. WORST CASE: If this component is compromised, what is the blast radius?
+6. RECOVERY: If this fails or vanishes, can we still recover? (escrow covers it?)
+7. EGRESS: What network access does it need? Is it allowlisted and logged?
+8. COST: What does it cost money-wise, and does it have a cap?
+9. MONITORING: How do we know when it misbehaves? (heartbeat, canary, alert?)
+10. ROLLBACK: How do we undo this change safely?
+11. TESTING: What proves it works? (rebuild test, break-glass test, egress test)
+12. DOCS: Are the data map, decisions log, and threat model updated?
+```
+
+For genuinely major changes, the full fifteen-expert list (§74) remains available.
+
+---
+
+# 74. Expanded Fifteen-Expert Review
+
+For major changes only, use:
+
+1. Cloud/security architect
+2. Linux/SRE engineer
+3. AI-agent security engineer
+4. DevOps/IaC engineer
+5. Privacy/data engineer
+6. network security engineer
+7. IAM architect
+8. incident-response engineer
+9. disaster-recovery engineer
+10. browser security engineer
+11. Zero Trust architect
+12. FinOps engineer
+13. application-security engineer
+14. systems-performance engineer
+15. red-team/threat-modeling engineer
+
+---
+
+# 75. Golden Security Rules
+
+### v0.1 rules (1–20)
+
+1. No public VNC.
+2. No unnecessary public SSH.
+3. No Hermes as root.
+4. No secrets in Git.
+5. No unrestricted sudo.
+6. No unrestricted agent egress.
+7. No profile combining unrestricted private data + untrusted content + outbound communication.
+8. No privileged credentials in Hermes.
+9. No agent-controlled final approval.
+10. No single recovery dependency.
+11. No backup without restore testing.
+12. No single backup credential with destructive privileges.
+13. No unreviewed MCP.
+14. No unreviewed skill.
+15. No unrestricted browser session to sensitive personal accounts.
+16. No open messaging gateway.
+17. No unaudited privileged action.
+18. No assumption that Cloudflare alone establishes application identity.
+19. No dependence on the VPS for all monitoring.
+20. No dependence on the VPS for recovery.
+
+### v0.2 additions (21–28)
+
+21. No profile combines private data, untrusted content, and outbound communication.
+22. Outbound traffic is default-deny.
+23. Level 3 and 4 credentials never enter an agent context. Only the broker holds them.
+24. Approvals are enforced outside the agent, on an out-of-band channel.
+25. Recovery secrets are escrowed offline.
+26. Monitoring has an external heartbeat.
+27. Every API key and profile has a spend cap.
+28. Break-glass access exists and is tested.
+29. Every new component names the threat it reduces.
+
+### v0.3 additions (30–31)
+
+30. Level 4 credentials never live on the VPS — not even in the broker.
+31. Browser profiles and cookies are never included in backups.
+
+---
+
+# 76. Definition of Done
+
+## Infrastructure
+
+* [ ] OVH VPS
+* [ ] OS hardened
+* [ ] inbound firewall
+* [ ] outbound firewall (default-deny, tested with timed flush)
+* [ ] swap
+* [ ] zram
+* [ ] earlyoom
+* [ ] resource limits
+* [ ] automatic security updates
+* [ ] dedicated Linux users
+
+## Identity
+
+* [ ] Tailscale
+* [ ] server tag
+* [ ] grants
+* [ ] MFA/passkeys
+* [ ] FIDO2 where practical
+* [ ] device posture
+* [ ] controlled key expiry (documented exception)
+* [ ] OVH rescue path
+* [ ] break-glass path tested
+
+## Hermes
+
+* [ ] installed
+* [ ] OAuth/OIDC
+* [ ] profiles
+* [ ] messaging allowlists
+* [ ] browser isolation
+* [ ] Bot Screen
+* [ ] dangerous-command approval
+* [ ] website blocklist
+* [ ] MCP controls
+* [ ] memory
+* [ ] scheduled tasks
+
+## Agent isolation
+
+* [ ] separate Linux users
+* [ ] profile trust table implemented (§34.2)
+* [ ] systemd sandboxing
+* [ ] rootless containers
+* [ ] browser containers
+* [ ] terminal containers
+* [ ] network restrictions
+* [ ] filesystem restrictions
+* [ ] egress default-deny in place and tested
+
+## Cloudflare
+
+* [ ] DNS
+* [ ] Tunnel
+* [ ] Access
+* [ ] MFA
+* [ ] origin JWT validation
+* [ ] rate limiting
+* [ ] logging
+
+## Secrets
+
+* [ ] Infisical
+* [ ] separate environments
+* [ ] profile-specific credentials
+* [ ] per-profile machine credentials documented
+* [ ] rotation policy
+* [ ] offline recovery
+* [ ] no secrets in Git
+
+## Approval
+
+* [ ] external broker deployed (agent proven unable to reach Level 3/4 credentials)
+* [ ] exact-action approvals
+* [ ] short-lived approval tokens
+* [ ] privileged executor
+* [ ] audit log (off-box)
+* [ ] human authentication (out-of-band)
+* [ ] Level 4 credentials off the VPS
+
+## Backups
+
+* [ ] OVH snapshot process
+* [ ] Hermes backup
+* [ ] Restic (browser profiles/cookies excluded)
+* [ ] R2
+* [ ] bucket-scoped credentials
+* [ ] separate prune credential
+* [ ] bucket lock/retention
+* [ ] `restic check` scheduled
+* [ ] secondary backup
+* [ ] restore test
+
+## Monitoring
+
+* [ ] local metrics
+* [ ] local service health
+* [ ] external dead-man's switch
+* [ ] backup heartbeat
+* [ ] off-box security logs
+* [ ] alerts
+* [ ] canary tokens
+
+## IaC
+
+* [ ] OpenTofu
+* [ ] Ansible
+* [ ] cloud-init
+* [ ] pinned versions
+* [ ] Gitleaks
+* [ ] pre-commit
+* [ ] Git repository
+* [ ] documented rollback
+
+## Recovery
+
+* [ ] offline recovery kit
+* [ ] OVH console/rescue
+* [ ] R2 recovery
+* [ ] Infisical recovery
+* [ ] identity recovery
+* [ ] bootstrap script
+* [ ] rebuild test
+* [ ] RPO defined
+* [ ] RTO defined
+
+## Process
+
+* [ ] Threat model written and reviewed
+* [ ] Spend caps set per key and profile
+* [ ] Prompt-injection tests pass (egress exfiltration + broker bypass)
+* [ ] Scheduled rebuild test completed
+* [ ] RTO/RPO agreed and measured in a rebuild test
+
+---
+
+# 77. Implementation Phases
+
+**Principle (v0.3):** build a **minimum tier first**. Per-profile users, rootless containers, an egress proxy, a broker, and Xvnc together are a lot for 4 GB. Get a working, safe baseline before piling on isolation machinery.
+
+## Phase 0 — Minimum viable tier (v0.3, first)
+
+* Tailscale (tagged node)
+* nftables firewall (default-deny inbound; timed-flush testing for OUTPUT rules)
+* non-root Hermes
+* **one research profile** with egress limits
+* **a tested restore** (backup + restore proven before anything else relies on it)
+
+## Phase 1 — Break-glass and identity
+
+* break-glass path (OVH console/KVM/rescue, hardware keys)
+* tagged Tailscale node
+* passkeys / FIDO2 enforced
+
+## Phase 2 — Escrow and cost caps
+
+* recovery escrow (offline)
+* spend caps per key and profile
+* **before any agent runs**
+
+## Phase 3 — Isolation baseline (before enabling browser or tools)
+
+* Linux users per profile
+* rootless containers
+* systemd sandboxing
+* egress rules (default-deny, per-user)
+
+## Phase 3.5 — Approval broker
+
+* build the approval broker **before granting any Level 2+ capability**
+* Level 4 credentials stay off-box (OpenTofu from laptop)
+
+## Phase 4 — Full Hermes capability
+
+* remaining profiles (personal, automation, high-risk)
+* Bot Screen, messaging, email, scheduled tasks
+* browser/terminal containers per profile
+
+## Phase 5 — Origin validation
+
+* Cloudflare Access JWT validation at the origin
+
+## Phase 6 — Backup hardening
+
+* split backup and prune credentials
+* second backup copy
+* integrity checks (`restic check`, `--read-data-subset`)
+
+## Phase 7 — Observability
+
+* dead-man's switch
+* off-box logs
+* canary tokens
+
+## Phase 8 — Adversarial testing and rebuild
+
+* prompt-injection tests that specifically try **egress exfiltration** and **broker bypass**
+* scheduled rebuild on a temporary VPS
+* threat-model review after results
+
+---
+
+# 78. Decisions Log
+
+```text
+DATE: 2026-09-24
+DECISION: Approvals enforced by an external broker, not by the agent
+REASON: An injected agent can skip or fake its own risk assessment
+ALTERNATIVES: Agent self-assessment plus prompts (rejected)
+SECURITY IMPACT: Large positive; removes a single point of failure
+COST IMPACT: Small (extra service and dev time)
+ROLLBACK: Disable broker routes; Level 3/4 actions become unavailable
+
+DATE: 2026-09-24
+DECISION: Default-deny egress, per-profile via Linux user
+REASON: Primary data-exfiltration path for a hijacked agent
+ALTERNATIVES: Inbound-only firewall (rejected)
+SECURITY IMPACT: Large positive
+COST IMPACT: Low; ongoing allowlist upkeep
+ROLLBACK: Relax per-profile rules
+
+DATE: 2026-09-24
+DECISION: Offline recovery escrow
+REASON: Restore currently depends on systems being restored
+ALTERNATIVES: Store only in Infisical (rejected)
+SECURITY IMPACT: Positive; enables recovery
+COST IMPACT: Negligible
+ROLLBACK: N/A
+
+DATE: 2026-09-24
+DECISION: Level 4 credentials off the VPS entirely (v0.3)
+REASON: A root compromise of the VPS would otherwise capture every privileged credential the broker holds
+ALTERNATIVES: Broker on separate infrastructure for delegated L3/4 (adopted where delegation is genuinely wanted)
+SECURITY IMPACT: Large positive; VPS root compromise no longer implies infrastructure compromise
+COST IMPACT: Manual effort for Level 4 changes via OpenTofu from laptop
+ROLLBACK: Return credentials to broker storage (not recommended)
+
+DATE: 2026-09-24
+DECISION: Browser profiles/cookies excluded from Restic backups (v0.3)
+REASON: A leaked backup would otherwise be a leaked login
+ALTERNATIVES: Encrypt browser data separately inside backup (deferred; adds complexity)
+SECURITY IMPACT: Positive; backup leak no longer equals session hijack
+COST IMPACT: Some sessions lost on restore (acceptable)
+ROLLBACK: Re-include with separate encryption if restore of browser state becomes necessary
+
+DATE: 2026-09-24
+DECISION: Minimum tier first (Phase 0) instead of full isolation upfront (v0.3)
+REASON: Full isolation stack is heavy for a 4 GB VPS and delays a working, safe baseline
+ALTERNATIVES: Build everything before enabling agent (rejected as impractical)
+SECURITY IMPACT: Neutral-to-positive; a tested restore early is worth more than late perfection
+COST IMPACT: Lower initial complexity
+ROLLBACK: N/A (ordering only)
+```
+
+---
+
+# 79. Verified-Claims Checklist (v0.3)
+
+**Open item:** the following Hermes-specific claims have not been verified against current docs. Check them before designing around them:
+
+* [ ] Bot Screen (behaviour, session storage location, cleanup)
+* [ ] built-in approvals (what they cover, bypassability)
+* [ ] SSRF protection (defaults, coverage)
+* [ ] tool gateway / MCP credential filtering
+* [ ] website blocklist enforcement layer
+* [ ] messaging DM pairing
+
+If any claim is wrong, the affected boundary must be compensated at the network/host layer, not inside Hermes.
+
+---
+
+# 80. Target Operating Model
+
+The final platform should behave like:
+
+```text
+                 LOW TRUST
+                    ↑
+               web content
+                    |
+              browser agent
+                    |
+              research profile
+                    |
+             automation profile
+                    |
+             personal profile
+                    |
+           privileged broker
+                    |
+                HUMAN
+                    |
+               HIGH TRUST
+```
+
+The model never becomes the ultimate authority.
+
+---
+
+# 81. Final Architecture Principle
+
+The system should maximise:
+
+```text
+security
++
+capability
++
+recoverability
++
+efficiency
+```
+
+without maximising:
+
+```text
+complexity
+```
+
+The correct architecture is therefore not:
+
+> "Add every security product available."
+
+It is:
+
+> **Put each security boundary at the layer where it cannot be bypassed by the component it is protecting.**
+
+That means:
+
+* network policy outside Hermes
+* privileged approval outside Hermes
+* secrets outside Hermes
+* backups outside the VPS
+* monitoring outside the VPS
+* recovery outside the primary identity stack
+* infrastructure definition outside the server
+* human approval outside the model
+* browser isolation outside the browser itself
+
+---
+
+# 82. Approved Target Architecture
+
+The approved target architecture is:
+
+```text
+OVH VPS
++
+Hardened Linux
++
+nftables
++
+Tailscale
++
+Tailscale SSH
++
+FIDO2/passkeys
++
+device posture
++
+OVH rescue/console
++
+Cloudflare DNS
++
+Cloudflare Tunnel
++
+Cloudflare Access
++
+origin JWT validation
++
+Hermes OAuth/OIDC
++
+Hermes Agent
++
+separate Hermes profiles
++
+separate Linux users
++
+systemd sandboxing
++
+rootless containers
++
+restricted browser
++
+restricted terminal
++
+Bot Screen
++
+external approval broker (L3; L4 credentials off-box)
++
+Infisical (per-profile machine credentials)
++
+Restic (browser data excluded)
++
+Cloudflare R2
++
+R2 retention/lock
++
+separate backup credentials
++
+secondary backup
++
+Healthchecks.io
++
+off-box audit logging
++
+canary detection
++
+OpenTofu
++
+Ansible
++
+cloud-init
++
+Gitleaks
++
+version pinning
++
+offline recovery kit
++
+documented RPO/RTO
+```
+
+This is the baseline for implementation.
+
+---
+
+# 83. Change Log
+
+## v0.1
+
+Initial architecture.
+
+## v0.2
+
+Fifteen-expert security and reliability review.
+
+Major additions:
+
+* outbound default-deny policy
+* agent egress isolation
+* Cloudflare Access JWT validation
+* Tailscale tagged server
+* explicit key-expiry decision
+* FIDO2/passkey authentication
+* OVH rescue/console recovery
+* independent offline recovery kit
+* external dead-man's-switch
+* external audit logging
+* canary detection
+* separate Restic backup/prune credentials
+* R2 bucket locks
+* external privileged-action broker
+* action-specific approvals
+* separate Linux users per trust profile
+* systemd sandboxing
+* rootless containers
+* browser isolation
+* terminal isolation
+* private/untrusted/outbound separation
+* API spend controls
+* API key segmentation
+* threat model
+* RPO/RTO
+* scheduled rebuild tests
+* OpenTofu
+* Ansible
+* cloud-init
+* Gitleaks
+* version pinning
+* expanded incident response
+* expanded privacy controls
+* expanded LLM-provider data policy review
+* browser-session cleanup policy
+* OVH snapshots before major upgrades
+* zram
+* earlyoom
+* systemd MemoryMax
+* external approval/audit architecture
+
+## v0.3 (hybrid — merged CONTEXT1 + CONTEXT2 + CONTEXT3 review)
+
+Review corrections applied:
+
+* **Broker credentials off the box:** Level 4 credentials (Cloudflare, OVH, R2 admin) kept off the VPS entirely; changes via OpenTofu from the laptop. Delegated L3/4 broker runs on separate infrastructure where possible.
+* **Machine credential documented:** Infisical machine credential scoped per profile; secrets injected only into the process that needs them.
+* **Browser profiles and cookies excluded from Restic** so a leaked backup is not a leaked login.
+* **Restored items lost between versions:** implementation phases (§77), MCP/skill vetting checklist (§71), filesystem layout (§70), model routing (§44), decisions log (§78).
+* **Minimum tier first:** Phase 0 (Tailscale, firewall, non-root Hermes, one research profile with egress limits, tested restore) before the full isolation stack.
+* `OUTPUT DROP` rules tested with a timed `at` flush job to prevent lockout.
+* Level 3/4 approvals kept rare to avoid rubber-stamping.
+* Fifteen-expert review replaced with a one-page review checklist for one-person operation (§73.1); full list retained for major changes.
+* Hermes-specific claims flagged for verification (§79) instead of being assumed.
+
+---
+
+# 84. Golden Rule
+
+> **Never rely on an AI agent to enforce a security boundary that the AI agent itself has the power to bypass.**
