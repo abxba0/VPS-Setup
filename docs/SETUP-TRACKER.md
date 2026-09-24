@@ -23,12 +23,17 @@ Live progress against `docs/PLAN.md`. Updated by the user; gates must pass befor
 | Healthchecks.io account | **DONE** | Created (free tier) |
 
 ### 0.2 Provision & bootstrap VPS — ☐ TODO (waiting on OVH provisioning)
+> **READY:** `cloud-init/user-data.yaml` (bootstrap + interim firewall + DNS pin + sshd drop-in) is built and panel-reviewed. Replace the SSH key placeholder, paste into the OVH install panel, then follow `scripts/README.md`.
 
 ### 0.3 Firewall (in/out default-deny, timed-flush) — ☐ TODO
+> **READY:** `scripts/setup-nftables.sh` (apply/confirm/rollback with 5-min timed-flush) built and panel-reviewed.
 
 ### 0.4 Research profile + egress limits — ☐ TODO
 
 ### 0.5 First backup + tested restore — ☐ TODO
+> **READY:** `scripts/backup.sh`, `scripts/restore-test.sh`, `scripts/systemd/*`, `scripts/README.md` runbook built and panel-reviewed. Needs: R2 bucket + bucket-scoped token + Healthchecks.io check URL.
+
+**Expert review:** 3-expert panel (security architect / SRE / red-team) + follow-up verification pass — all CRITICAL/HIGH findings fixed; verdict APPROVED after R1–R3 runbook/consistency fixes. Accepted interim risks (443-any, DoH bypass, DNS tunneling via resolvers, loopback) are documented in the DECISION block of `scripts/setup-nftables.sh`.
 
 **Gate 0:** ☐ not reached
 
