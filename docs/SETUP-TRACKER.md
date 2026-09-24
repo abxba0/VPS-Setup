@@ -17,10 +17,10 @@ Live progress against `docs/PLAN.md`. Updated by the user; gates must pass befor
 | OVH account | **DONE** | Created; 4 GB VPS **paid, awaiting provisioning** |
 | OVH passkey/FIDO2 + TOTP backup + recovery email/phone | ☐ TODO | Verify all four are set |
 | Two FIDO2 hardware keys (one offline) | ☐ TODO | Passkey on device OK for now; hardware keys before Phase 1 |
-| Cloudflare account + domain | **PARTIAL** | Subdomain created; **MFA/passkey still needed** |
+| Cloudflare account + domain | **DONE** | Subdomain created; MFA/passkey added |
 | Tailscale account | **DONE** | Verify passkey/MFA enabled |
-| Infisical account | **DONE** | Verify MFA/passkey enabled |
-| Healthchecks.io account | ☐ TODO | Free tier |
+| Infisical account | **DONE** | MFA added |
+| Healthchecks.io account | **DONE** | Created (free tier) |
 
 ### 0.2 Provision & bootstrap VPS — ☐ TODO (waiting on OVH provisioning)
 
@@ -46,9 +46,9 @@ Live progress against `docs/PLAN.md`. Updated by the user; gates must pass befor
 
 ---
 
-## Immediate next actions (this week)
+## Immediate next actions
 
-1. **You:** add passkey + TOTP to Cloudflare (closes the only MFA gap), confirm TOTP backup + recovery email/phone on OVH, verify passkey/MFA on Tailscale + Infisical.
-2. **You:** create Healthchecks.io account (free tier).
+1. **You:** confirm OVH has TOTP backup + verified recovery email/phone (passkey primary if the panel offers it); verify Tailscale passkey/MFA.
+2. **You (deferred to Phase 1):** two FIDO2 hardware keys, one stored offline.
 3. **Me:** scaffold `cloud-init/` user-data, `scripts/` (nftables + timed flush, backup/restore), ready to paste at OVH install time.
-4. **You (when VPS activates):** reinstall/provision with the cloud-init user-data via OVH panel → Gate 0a closes → Phase 0.2 begins.
+4. **You (when VPS activates):** provision with the cloud-init user-data via OVH panel → Gate 0a closes → Phase 0.2 begins.
