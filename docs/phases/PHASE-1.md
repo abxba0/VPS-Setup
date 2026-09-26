@@ -20,7 +20,7 @@ Every protection you've built routes through accounts: OVH (console/KVM/rescue),
 
 ## Before you start
 
-- Gate 0 has passed: SSH is Tailscale-only, the firewall is default-deny both directions with the timed-flush rollback proven, and the laptop-side restore (Gate 0 DR test) succeeded. The rescue/KVM drill from Phase 0.2 (`scripts/README.md` step 1) was already done once while healthy — this phase formalizes and repeats it.
+- Gate 0 has passed: SSH is identity-gated (Tailscale + Cloudflare Access; direct-IP SSH denied), the firewall is default-deny both directions with the timed-flush rollback proven, and the laptop-side restore (Gate 0 DR test) succeeded. The rescue/KVM drill from Phase 0.2 (`scripts/README.md` step 1) was already done once while healthy — this phase formalizes and repeats it.
 - Both FIDO2 hardware keys are physically in hand. Key #1 (primary): on your person / daily device. Key #2 (break-glass): goes into physical offline storage this phase.
 - The Phase 0.2 rescue-mode rehearsal date is in the ops log (it counts as rehearsal #1; today's drill is the first *formal, timed* one).
 - A second SSH session open on the VPS as a lifeline during any identity work.
@@ -64,7 +64,7 @@ Printed, in the offline kit — not only in the password manager:
 
 1. From any machine with internet: `https://www.ovh.com/manager/` → log in with hardware key + separate strong credential (not your usual session).
 2. VPS → **Boot in rescue mode** → wait for the rescue email credentials.
-3. SSH to rescue (rescue accepts public SSH — this is why public SSH *to rescue* is an accepted temporary exception): `mount /dev/sda1 /mnt` → inspect/repair.
+3. SSH to rescue (rescue accepts public SSH — this is why public SSH *to rescue* is an accepted temporary exception; this rescue-environment SSH is OVH's own sshd in a separate boot environment — host-level sshd/firewall restrictions do not affect it): `mount /dev/sda1 /mnt` → inspect/repair.
 4. Or open **KVM** for interactive console → fix firewall/SSH configs on the real disk.
 5. Boot back to disk → verify service → close the incident entry.
 

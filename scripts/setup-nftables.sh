@@ -89,9 +89,11 @@ ${res}
         meta l4proto ipv6-icmp icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept
         meta l4proto ipv6-icmp icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request, 135, 136 } limit rate 5/second accept
         # Tailscale transports may arrive on the WAN iface
-        udp port 41641 accept
+        # (dport syntax: nftables 1.0.9 rejects 'udp port' shorthand —
+        #  real-test fix, sandbox battery 2026-09-26)
+        udp dport 41641 accept
         # SSH ONLY via the tailnet
-        iifname "${TAILSCALE_IF}" tcp port 22 accept
+        iifname "${TAILSCALE_IF}" tcp dport 22 accept
         # Everything else: log (rate-limited) and drop
         limit rate 5/second counter log prefix "nft-in-drop: "
         counter drop
@@ -113,22 +115,25 @@ ${res}
         # nft is first-match: if these sit below the 80/443/123 accepts, the
         # metadata endpoint and RFC1918 stay reachable via allowed ports
         # (expert-panel finding; spec section 9).
-        ip daddr { [IP_ADDRESS]/8, [IP_ADDRESS]/12, [IP_ADDRESS]/16, [IP_ADDRESS]/16, [IP_ADDRESS]/8, [IP_ADDRESS]/8, [IP_ADDRESS]/10, [IP_ADDRESS]/4, [IP_ADDRESS]/4 } counter drop
+        ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 } counter drop
         ip6 daddr { fc00::/7, fe80::/10, ::1 } counter drop
         # --- Infrastructure egress (allowlist) ---
         # DNS pinned to approved resolvers only (no open port-53 exfil)
-        ip daddr @dns_resolvers udp port 53 accept
-        ip daddr @dns_resolvers tcp port 53 accept
+        # REAL-TEST FIX (sandbox 2026-09-26): nftables 1.0.9 (Ubuntu 24.04)
+        # rejects the 'udp/tcp port' shorthand — explicit dport/sport is the
+        # portable syntax. Outbound matches dport; established is covered above.
+        ip daddr @dns_resolvers udp dport 53 accept
+        ip daddr @dns_resolvers tcp dport 53 accept
         # NTP pinned to time.cloudflare.com (panel finding: unpinned udp/123
         # is an open beacon channel)
-        ip daddr { [IP_ADDRESS], [IP_ADDRESS] } udp port 123 accept
+        ip daddr { 162.159.200.1, 162.159.200.123 } udp dport 123 accept
         # HTTPS/HTTP: interim allowlist (packages, cloudflared, R2, Infisical,
         # model APIs). Narrowed to domain-level policy by the Phase 3 proxy.
-        tcp port { 80, 443 } accept
+        tcp dport { 80, 443 } accept
         # Tailscale direct traffic. STUN (3478) intentionally DROPPED:
         # DERP-over-443 fallback keeps Tailscale functional (relay mode) and
         # closes an unpinned beacon channel (panel finding).
-        udp port 41641 accept
+        udp dport 41641 accept
         # --- Log and drop the rest ---
         limit rate 10/second counter log prefix "nft-out-drop: "
         counter drop
@@ -152,6 +157,25 @@ do_apply() {
     # The snapshot must start with 'flush ruleset' to actually REPLACE.
     { echo "#!/usr/sbin/nft -f"; echo "flush ruleset"; nft list ruleset; } > "${GOOD}"
     chmod 600 "${GOOD}"
+    # REAL-TEST FINDING (sandbox battery 2026-09-26): with UFW active the
+    # dump contains iptables-nft 'xt' compat expressions that 'nft -f'
+    # REJECTS — the timed rollback fires but restores nothing. Warn loudly
+    # so the operator migrates to pure nftables (or retires UFW) BEFORE
+    # relying on the safety net.
+    if ! nft -c -f "${GOOD}" >/dev/null 2>&1; then
+      log "WARNING: known-good snapshot contains iptables-nft compat expressions (UFW active)."
+      log "WARNING: the timed rollback will fail to reload it. Retire UFW ('ufw disable') or migrate fully to nftables BEFORE trusting the rollback net."
+    fi
+  else
+    # REAL-TEST FINDING F-T3 (sandbox round 3): an existing snapshot may be
+    # STALE (from an apply that was never confirmed, or from before other
+    # rules changed). Rolling back to it would wipe the live policy. Trust a
+    # reused snapshot only if it matches the live ruleset exactly.
+    if [[ "$(tail -n +3 "${GOOD}")" != "$(nft list ruleset)" ]]; then
+      log "known-good snapshot is stale (differs from live ruleset) — re-snapshotting."
+      { echo "#!/usr/sbin/nft -f"; echo "flush ruleset"; nft list ruleset; } > "${GOOD}"
+      chmod 600 "${GOOD}"
+    fi
   fi
 
   # 2. Schedule the timed rollback job (THE safety net).
@@ -159,13 +183,20 @@ do_apply() {
   # later restore an outdated baseline over a confirmed state).
   local oldjob
   oldjob=$(cat "${JOBFILE}" 2>/dev/null || true)
-  [[ -n "${oldjob}" ]] && atrm "${oldjob}" 2>/dev/null
-  echo "nft -f ${GOOD}" | at now + 5 minutes 2>/dev/null \
-    | awk '/job/ {print $2}' > "${JOBFILE}" || true
+  [[ -n "${oldjob}" ]] && atrm "${oldjob}" 2>/dev/null || true
+  # REAL-TEST FINDING (sandbox battery 2026-09-26): at 3.2.x prints its
+  # 'job N at ...' confirmation to STDERR, so 'at | awk' captured nothing and
+  # apply aborted. Schedule, then read the id from atq (highest id = ours).
+  echo "nft -f ${GOOD}" | at now + 5 minutes >/dev/null 2>&1 || true
+  atq | awk '{print $1}' | sort -n | tail -1 > "${JOBFILE}" || true
   chmod 600 "${JOBFILE}" 2>/dev/null || true
   local job
   job=$(cat "${JOBFILE}" 2>/dev/null || true)
   [[ -n "${job}" ]] || die "could not schedule the rollback 'at' job — aborting"
+  # Verify the job is registered (real-test finding: capture can silently
+  # pick the wrong id if jobs race) — the id must exist in atq.
+  atq | awk '{print $1}' | grep -qx "${job}" \
+    || die "rollback 'at' job ${job} not found in atq — aborting"
 
   # 3. Render + apply the new ruleset.
   render_ruleset "${wan}" > "${CONF}.new"

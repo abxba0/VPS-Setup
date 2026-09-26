@@ -4,7 +4,7 @@
 
 ## Your goal
 
-At the end of Phase 0 the machine is reachable **only** through Tailscale (public SSH closed), both firewall directions are default-deny with logging, Hermes runs non-root in a sandboxed unit with one research profile limited to credential-free web reads, and — critically — a **full restore has been proven from the laptop using offline-held credentials** with a visible backup heartbeat in Healthchecks.io. The two protections this phase builds — a default-deny network perimeter and a *proven* restore — are exactly the ones that fail catastrophically if retrofitted. Nothing in later phases may depend on any unproven assumption made here.
+At the end of Phase 0 admin SSH is reachable **only** via the two identity-gated paths — Tailscale SSH and Cloudflare Access SSH (tunnel → localhost:22) — with direct/public SSH denied and logged, both firewall directions are default-deny with logging, Hermes runs non-root in a sandboxed unit with one research profile limited to credential-free web reads, and — critically — a **full restore has been proven from the laptop using offline-held credentials** with a visible backup heartbeat in Healthchecks.io. The two protections this phase builds — a default-deny network perimeter and a *proven* restore — are exactly the ones that fail catastrophically if retrofitted. Nothing in later phases may depend on any unproven assumption made here.
 
 ## Non-negotiables this phase enforces
 
@@ -22,7 +22,7 @@ From `PLAN.md` §Non-negotiables, the ones this phase enforces or preconditions:
 
 Phase 0 builds the two protections that fail catastrophically if retrofitted: a default-deny network perimeter (both directions) and a *proven* restore. A firewall you can always weaken retroactively is worthless unless the deny is the default; a backup that has never been restored is a hope, not a control. In threat terms (ARCHITECTURE §4 IDs):
 
-- Inbound default-deny + Tailscale-only SSH removes nearly all of **A** (internet attacker exploiting exposed services).
+- Inbound default-deny + identity-gated SSH (Tailscale + CF Access; direct-IP SSH denied) removes nearly all of **A** (internet attacker exploiting exposed services).
 - Egress default-deny is the *primary* containment for **C** (indirect prompt injection → exfiltration) and limits **H** (VPS compromise) from phoning home.
 - The tested restore directly targets **I** (operator error) and **K** (backup destruction) by making recovery a demonstrated fact before anything valuable depends on it.
 
@@ -39,7 +39,7 @@ This phase is deliberately the "minimum viable" tier: the research profile it en
 **Hard ordering constraints:**
 
 - **No L2+ capability, no credential, and no private data in any profile before Phase 2.** The research profile is web-reads-only, credential-free.
-- **No public SSH disabling until Tailscale SSH is proven working** (test from your laptop over the tailnet *first*, then restrict).
+- **No public SSH disabling until BOTH identity-gated paths are proven working** (Cloudflare Access SSH session and Tailscale SSH from your laptop — test both *first*, then restrict; `scripts/README.md` Step 2.5).
 - **No restic schedule wired into Healthchecks until one full restore from the laptop has succeeded.** Gate 0's restore line is not decorative.
 - **Nothing in this phase may write a secret to the Git repo** (Gitleaks hook exists — it must stay first in the hook chain, before the first commit — confirmed done).
 
@@ -110,7 +110,11 @@ Commands run from the VPS unless prefixed "on laptop". `<...>` placeholders are 
    sudo ss -tlnp | grep :22
    # From laptop (via tailnet):
    tailscale status && ssh <admin-user>@<tailscale-ip> 'echo TAILNET_SSH_OK'
+   # From laptop (via Cloudflare Access — keep this session open for the cutover):
+   cloudflared access ssh --hostname ssh.<domain> 'echo CF_ACCESS_SSH_OK'
    ```
+
+   Both approved sessions must be open when `scripts/restrict-ssh.sh apply` runs — existing direct-IP sessions terminate on apply.
 9. **Non-root Hermes install (Phase 0.4 groundwork):** install Hermes under the `deploy` user or its own `hermes` user (never root). Follow the current Hermes docs; immediately wrap it in the systemd unit with the sandbox drop-ins from step 12 below.
 
 ### 0.3 — Firewall (in/out default-deny, timed-flush)
@@ -331,7 +335,7 @@ nmap -Pn -p- -sT -T4 --reason -oN phase0-tcp-scan.txt <VPS_PUBLIC_IP>
 sudo nmap -Pn -sU --top-ports 200 --reason <VPS_PUBLIC_IP>
 ```
 
-- **PASS:** every port returns `filtered` (drop, not reject — you should see no RSTs), or `closed` only for services you deliberately still expose during 0.2 (e.g., SSH before you flip to Tailscale-only). After the Tailscale-only cutover: **zero open/any-state ports publicly**. Also record: no port shows `open` on UDP 53/123/161/500 (classic forgotten services).
+- **PASS:** every port returns `filtered` (drop, not reject — you should see no RSTs), or `closed` only for services you deliberately still expose during 0.2 (e.g., SSH before the access cutover). After the two-path cutover (CF Access + Tailscale, direct-IP SSH denied): **zero open/any-state ports publicly**. Also record: no port shows `open` on UDP 53/123/161/500 (classic forgotten services).
 - **FAIL:** any `open` port you did not consciously allow; any port showing `open|filtered` on UDP without you knowing why; the scan itself being reflected in logs only on Tailscale (it shouldn't be reachable there from outside).
 - **Fake-pass warning:** run the scan from a network you don't administer (phone hotspot), never from inside OVH's LAN or the same LAN as the VPS — a local scan sees nothing because of local routing, not because of the firewall.
 
@@ -431,7 +435,7 @@ diff -r --brief /tmp/restore-test/srv/hermes/research /srv/hermes/research   # o
 
 From `PLAN.md` Gate 0, plus the fake-pass warnings:
 
-- [ ] SSH only via Tailscale; password SSH disabled.
+- [ ] SSH only via the two identity-gated paths — Tailscale SSH and Cloudflare Access SSH (tunnel → localhost:22); password SSH disabled; direct/public SSH denied and logged.
 - [ ] Firewall default-deny both directions, with logged denials.
 - [ ] Hermes running non-root, sandboxed, with one research profile limited to web reads.
 - [ ] A restore from backup succeeded **from the laptop using offline-held credentials**.

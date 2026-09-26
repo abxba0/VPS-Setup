@@ -26,7 +26,7 @@ Goal: a safe, working baseline you can already restore — not the full isolatio
 - [ ] Provision VPS with cloud-init: initial user, SSH keys only (no password auth), unattended security updates.
 - [ ] Verify OVH rescue mode + KVM/console access works **now**, while everything is healthy.
 - [ ] Install Tailscale on the VPS; tag the node `tag:hermes-vps`.
-- [ ] Tailscale SSH as the admin path; disable public SSH in firewall later (step 0.3). Document the key-expiry exception for this tagged node (why/risk/mitigation — see ARCHITECTURE §6).
+- [ ] Tailscale SSH **and Cloudflare Access SSH (tunnel → `ssh://localhost:22`)** as the two identity-gated admin paths; disable direct/public SSH in the firewall (step 0.3). Document the key-expiry exception for this tagged node (why/risk/mitigation — see ARCHITECTURE §6).
 - [ ] Non-root Hermes install.
 
 ### 0.3 Firewall — inbound and outbound
@@ -55,7 +55,7 @@ Goal: a safe, working baseline you can already restore — not the full isolatio
 - [ ] **Do a full restore test to a scratch directory (or a second machine) using the recovery credential from your laptop.** Compare checksums.
 
 **Gate 0 (Phase 0 exit — all must pass):**
-- [ ] SSH only via Tailscale; password SSH disabled.
+- [ ] SSH only via the two identity-gated paths — Tailscale SSH and Cloudflare Access SSH (tunnel → localhost:22); password SSH disabled; direct/public SSH denied and logged.
 - [ ] Firewall default-deny both directions, with logged denials.
 - [ ] Hermes running non-root, sandboxed, with one research profile limited to web reads.
 - [ ] A restore from backup succeeded **from the laptop using offline-held credentials**.
@@ -176,11 +176,11 @@ This is the most security-critical component. Keep it boring.
 
 ## Phase 5 — Cloudflare & origin validation
 
-- [ ] Cloudflare Tunnel via `cloudflared` (no inbound ports open for the dashboard).
+- [ ] Cloudflare Tunnel via `cloudflared` (outbound-only tunnel; no inbound ports — dashboard and the SSH Access hostname both ride it).
 - [ ] Cloudflare Access in front of the dashboard: passkey/FIDO2, **short session lifetime**; separate stricter Access policy for admin/approval routes.
 - [ ] **Origin validates `Cf-Access-Jwt-Assertion`**: signature, issuer, audience, expiry, claims. Never trust the tunnel or the browser cookie alone.
 - [ ] Rate limiting + logging on Cloudflare.
-- [ ] The dashboard's public hostname is the only public surface; everything else admin-plane only.
+- [ ] The dashboard and SSH-over-Access hostnames are the only public surfaces; everything else admin-plane only.
 
 **Gate 5:** direct request to origin bypassing Cloudflare is rejected (JWT missing/invalid); Access session expires quickly; approval routes require the stricter policy.
 

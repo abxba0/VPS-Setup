@@ -4,7 +4,7 @@
 
 ## Your goal
 
-The dashboard is reachable only via Cloudflare Tunnel (zero inbound ports for it), behind Cloudflare Access with passkey auth and **short session lifetime**, and — the part everyone skips — the **origin independently validates the `Cf-Access-Jwt-Assertion`**, so a request that bypasses Cloudflare is rejected by the app itself. The dashboard's public hostname is the *only* public surface, which keeps the blast radius of any Access misconfiguration to one app.
+The dashboard is reachable only via Cloudflare Tunnel (zero inbound ports for it), behind Cloudflare Access with passkey auth and **short session lifetime**, and — the part everyone skips — the **origin independently validates the `Cf-Access-Jwt-Assertion`**, so a request that bypasses Cloudflare is rejected by the app itself. The dashboard's public hostname and the SSH-over-Access hostname are the only public surfaces (both ride the outbound-only tunnel), which keeps the blast radius of any Access misconfiguration to two apps.
 
 ## Non-negotiables this phase enforces
 
@@ -27,7 +27,7 @@ Threats **A** (internet attacker) and **F** (compromised session) both end their
 
 **Hard ordering constraints:**
 
-- **No public surface other than the dashboard hostname** — no direct origin ports, no second tunnel, no "temporarily exposed for debugging."
+- **No public surface other than the dashboard hostname and the SSH-over-Access hostname** — no direct origin ports, no additional tunnels, no "temporarily exposed for debugging."
 - **The dashboard must reject all requests lacking a valid `Cf-Access-Jwt-Assertion` before this phase is "done"** — including from localhost and from the tailnet.
 - Short Access session lifetime and the stricter admin/approval policy are part of the gate, not a follow-up.
 
@@ -109,7 +109,7 @@ Then enforce: any request **without** a valid assertion → 403. Kill the tunnel
 
 ### 5.5 — Public surface audit
 
-5. `dash.<domain>` is the only public hostname; everything else (admin, metrics, broker) stays Tailscale-only. Verify:
+5. `dash.<domain>` and `ssh.<domain>` (CF Access SSH → localhost:22) are the only public hostnames; everything else (admin, metrics, broker) stays on the Tailscale admin plane. Verify:
    ```bash
    # DNS records inventory in Cloudflare = exactly what you expect (check in the dashboard/OpenTofu plan)
    nmap -Pn -p- <VPS_PUBLIC_IP>        # from outside: nothing (Gate 0b re-check)
@@ -128,7 +128,7 @@ cloudflared ≈ 30–60 MB (`MemoryMax=256M` on its unit, `TasksMax=50`). If JWT
 
 ### Failure modes & recovery
 
-- **Tunnel down but box healthy:** Healthchecks uptime check goes red; `journalctl -u cloudflared` for the cause (usually CF edge or credential expiry). Recovery: `systemctl restart cloudflared`; if cert/token expired, re-login via the dashboard token. Admin plane (Tailscale) is unaffected — that's the point of two planes.
+- **Tunnel down but box healthy:** Healthchecks uptime check goes red; `journalctl -u cloudflared` for the cause (usually CF edge or credential expiry). Recovery: `systemctl restart cloudflared`; if cert/token expired, re-login via the dashboard token. Admin plane (Tailscale) is unaffected — that's the point of separate planes (note: the CF Access SSH path shares the Cloudflare plane with the dashboard; its identity boundary is the Access app policy, and HTTP-surface JWT validation at the origin is this phase's gate).
 - **JWT audience mismatch after creating a second Access app:** requests 403 across the board — you validated against app A's AUD while users authenticate via app B. Fix the AUD mapping; this failure is loud and immediate, not subtle.
 - **Key rotation:** CF rotates signing keys (~6 weeks) — the validator must refetch `/cdn-cgi/access/certs` (cache TTL in hours), else a healthy system starts 403-ing after rotation. Test by clearing the cached keys.
 - **Temptation to "temporarily" bind the dashboard to the public interface for debugging:** don't; debug via Tailscale + localhost.

@@ -23,12 +23,14 @@ USER DEVICES (passkey/FIDO2)
         │  Identity + MFA
         ▼
     Tailscale ──► Admin plane (SSH, emergency access)
+    Cloudflare Access ──► SSH over tunnel (localhost:22)
         │
         ▼
 ┌───────────────────────── OVH VPS ─────────────────────────┐
 │  nftables: default-deny inbound AND default-deny egress   │
 │                                                            │
-│  Tailscale (tagged node) ── admin only                     │
+│  Tailscale (tagged node) ── admin SSH path                 │
+│  cloudflared → localhost:22 ── SSH via CF Access           │
 │  cloudflared ──► Cloudflare Access ──► Hermes Dashboard    │
 │                                          │ OAuth/OIDC      │
 │                                          ▼                 │
@@ -127,6 +129,11 @@ Never assume tunnel = trusted. Validate `Cf-Access-Jwt-Assertion` (signature, is
 
 ### Tailscale
 Tagged node (`tag:hermes-vps`), least-privilege grants, passkeys/FIDO2, device posture, check mode for sensitive SSH. **Key expiry intentionally disabled** for the tagged server — documented exception (why: unattended reachability; risk: longer-lived node identity; mitigations: tags, restricted grants, MFA, OVH rescue, monitoring, rotation).
+
+### SSH admin access — two identity-gated paths
+Both paths gate on identity before any shell; sshd stays on port 22, direct/public SSH by IP is denied and logged (nftables restricts tcp/22 to the tailscale interface and loopback).
+- **Tailscale SSH** — tagged node, least-privilege ACLs, check mode for sensitive sessions.
+- **Cloudflare Access SSH** — `cloudflared` tunnel ingress `ssh://localhost:22`; the Access app (named users, passkey/MFA, short session lifetime) is the boundary. Interim risk, documented: the origin does not validate `Cf-Access-Jwt-Assertion` for the TCP/SSH path (HTTP-surface JWT validation is the Phase 5 gate).
 
 ### Break-glass (independent emergency access)
 - OVH control panel, KVM/console, rescue mode; documented procedure.
@@ -364,6 +371,7 @@ Full fifteen-expert review retained for genuinely major changes.
 | L4 credentials off-VPS (v0.3) | VPS root compromise must not imply infra compromise | Return creds to broker (not recommended) |
 | Browser data excluded from backups (v0.3) | Leaked backup ≠ leaked login | Re-include with separate encryption if needed |
 | Minimum tier first — Phase 0 (v0.3) | Full isolation stack too heavy for 4 GB; tested restore early > late perfection | N/A (ordering) |
+| SSH restricted to two identity-gated paths (CF Access tunnel → lo:22; Tailscale); direct/public SSH denied | Direct-IP SSH is an unauthenticated internet surface (threat A/G); both kept paths bind to identity (CF Access MFA, Tailscale ACL) | restrict-ssh.sh rollback / known-good nftables snapshot restores prior rules |
 
 ---
 

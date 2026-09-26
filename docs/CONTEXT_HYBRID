@@ -2741,6 +2741,15 @@ Review corrections applied:
 * Fifteen-expert review replaced with a one-page review checklist for one-person operation (§73.1); full list retained for major changes.
 * Hermes-specific claims flagged for verification (§79) instead of being assumed.
 
+## v0.3.1 (2026-09-26)
+
+Founder decision: admin SSH reduced to exactly two identity-gated paths:
+
+* **Cloudflare Access SSH** — `cloudflared` tunnel ingress `ssh://localhost:22`; the Access app (named users, passkey/MFA, short session) is the boundary. Documented interim risk: the origin does not validate `Cf-Access-Jwt-Assertion` for the TCP/SSH path (HTTP-surface origin JWT validation remains the Phase 5 gate).
+* **Tailscale SSH** — tagged node, least-privilege ACLs, check mode for sensitive sessions.
+
+Direct/public SSH by IP is denied and logged (nftables restricts tcp/22 to the Tailscale interface and loopback). sshd remains on port 22. Golden rule 2 ("no unnecessary public SSH") still holds: no unauthenticated SSH surface remains. Implementation: `scripts/restrict-ssh.sh` (timed-flush apply/confirm/rollback), runbook `scripts/README.md` Step 2.5; decisions recorded in ARCHITECTURE §6/§18.
+
 ---
 
 # 84. Golden Rule
